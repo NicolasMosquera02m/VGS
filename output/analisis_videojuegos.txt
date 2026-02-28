@@ -1,0 +1,72 @@
+================================================================================
+ANÁLISIS DE VIDEOJUEGOS - BACKLOGGD
+================================================================================
+Fecha de generación: 2026-02-28 21:44:41
+
+ESTADÍSTICAS GENERALES
+--------------------------------------------------------------------------------
+Total de juegos: 60,000
+Total de jugadas: 12,334,733
+Rating promedio: 3.03
+Rating máximo: 5.00
+Rating mínimo: 0.30
+Géneros únicos: 23
+
+JUEGO MÁS JUGADO
+--------------------------------------------------------------------------------
+Título: Minecraft
+Número de jugadas: 38K
+Rating: 4.30
+Géneros: ['Adventure', 'Simulator']
+Plataformas: ['Windows PC', 'Mac', 'Linux']
+Fecha de lanzamiento: Nov 18, 2011
+
+TOP 20 GÉNEROS MÁS JUGADOS
+--------------------------------------------------------------------------------
+1. Adventure: 7,456,471 jugadas
+2. RPG: 3,533,400 jugadas
+9. Shooter: 3,170,309 jugadas
+6. Platform: 2,815,752 jugadas
+5. Indie: 2,045,892 jugadas
+3. Puzzle: 1,911,694 jugadas
+10. Strategy: 1,304,963 jugadas
+8. Simulator: 1,184,465 jugadas
+4. Brawler: 1,060,437 jugadas
+12. Arcade: 834,798 jugadas
+13. Fighting: 751,839 jugadas
+7. Turn Based Strategy: 750,560 jugadas
+18. Racing: 596,524 jugadas
+17. Sport: 437,798 jugadas
+15. Tactical: 424,342 jugadas
+14. Visual Novel: 348,963 jugadas
+20. Point-and-Click: 326,252 jugadas
+11. Music: 206,773 jugadas
+21. Real Time Strategy: 154,930 jugadas
+16. Card & Board Game: 149,644 jugadas
+
+RATINGS PROMEDIO POR GÉNERO (TOP 20 GÉNEROS)
+--------------------------------------------------------------------------------
+Visual Novel: 3.34 (2884 juegos)
+Point-and-Click: 3.30 (1545 juegos)
+Turn Based Strategy: 3.25 (1386 juegos)
+Music: 3.23 (1163 juegos)
+Tactical: 3.22 (1081 juegos)
+RPG: 3.22 (9234 juegos)
+Real Time Strategy: 3.20 (1021 juegos)
+Adventure: 3.10 (19368 juegos)
+Strategy: 3.08 (7766 juegos)
+Puzzle: 3.07 (6935 juegos)
+Brawler: 3.05 (1746 juegos)
+Shooter: 3.04 (7258 juegos)
+Platform: 3.01 (6126 juegos)
+Simulator: 3.00 (8050 juegos)
+Indie: 2.97 (16816 juegos)
+Card & Board Game: 2.95 (818 juegos)
+Fighting: 2.94 (2321 juegos)
+Racing: 2.92 (2638 juegos)
+Sport: 2.91 (3912 juegos)
+Arcade: 2.88 (5603 juegos)
+
+================================================================================
+Fin del reporte
+================================================================================
