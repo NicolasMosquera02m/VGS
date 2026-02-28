@@ -227,3 +227,45 @@ class DataTransformer:
             'unique_genres': len(set([g for genres in self.df['Genres_list'] for g in genres]))
         }
         return stats
+    
+    def get_top_games_by_genre(self, genre, top_n=5):
+        """
+        Obtiene los top N juegos más jugados para un género específico
+        
+        Args:
+            genre (str): Nombre del género
+            top_n (int): Número de juegos a devolver
+            
+        Returns:
+            pd.DataFrame: DataFrame con los top juegos del género
+        """
+        logger.info(f"Obteniendo top {top_n} juegos para género: {genre}")
+        
+        # Filtrar juegos que contienen este género
+        genre_games = self.df[self.df['Genres_list'].apply(lambda x: genre in x)]
+        
+        # Ordenar por número de jugadas y tomar top N
+        top_games = genre_games.nlargest(top_n, 'Plays_numeric')[['Title', 'Plays', 'Plays_numeric', 'Rating']]
+        
+        logger.info(f"Top {top_n} juegos de {genre} obtenidos")
+        return top_games
+    
+    def get_top_games_multiple_genres(self, genres_list, top_n=5):
+        """
+        Obtiene los top N juegos para múltiples géneros
+        
+        Args:
+            genres_list (list): Lista de nombres de géneros
+            top_n (int): Número de juegos por género
+            
+        Returns:
+            dict: Diccionario con género como clave y DataFrame de juegos como valor
+        """
+        logger.info(f"Obteniendo top {top_n} juegos para {len(genres_list)} géneros...")
+        
+        results = {}
+        for genre in genres_list:
+            results[genre] = self.get_top_games_by_genre(genre, top_n)
+        
+        logger.info(f"Análisis completado para todos los géneros")
+        return results

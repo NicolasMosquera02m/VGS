@@ -105,6 +105,51 @@ class VideoGameAnalyzer:
         logger.info(f"Generados {len(outputs)} archivos de salida")
         return outputs
     
+    def analyze_top_games_by_categories(self, top_n_genres=6, top_n_games=5):
+        """
+        Analiza los top N juegos para las primeras N categorías
+        
+        Args:
+            top_n_genres (int): Número de géneros principales a analizar
+            top_n_games (int): Número de juegos por género
+        
+        Returns:
+            dict: Diccionario con los resultados del análisis
+        """
+        logger.info(f"Analizando top {top_n_games} juegos para las {top_n_genres} categorías principales...")
+        
+        # Obtener las primeras 6 categorías del análisis existente
+        genres_df = self.results['analysis']['genres_df']
+        top_genres = genres_df.head(top_n_genres)['Genre'].tolist()
+        
+        logger.info(f"Categorías seleccionadas: {', '.join(top_genres)}")
+        
+        # Obtener top juegos para cada género
+        top_games_dict = self.transformer.get_top_games_multiple_genres(top_genres, top_n_games)
+        
+        # Generar visualizaciones
+        logger.info("Generando visualizaciones de top juegos...")
+        
+        # Crear loader si no existe
+        if not hasattr(self, 'loader'):
+            self.loader = DataLoader(output_dir=self.output_dir)
+        
+        # Gráficos individuales para cada género
+        individual_charts = self.loader.plot_top_games_multiple_genres(top_games_dict)
+        
+        # Gráfico combinado
+        combined_chart = self.loader.plot_combined_top_games(top_games_dict)
+        
+        self.results['top_games_analysis'] = {
+            'top_genres': top_genres,
+            'top_games_dict': top_games_dict,
+            'individual_charts': individual_charts,
+            'combined_chart': combined_chart
+        }
+        
+        logger.info(f"Análisis de top juegos completado. Generados {len(individual_charts) + 1} gráficos")
+        return self.results['top_games_analysis']
+    
     def run_full_pipeline(self):
         """
         Ejecuta el pipeline completo de análisis

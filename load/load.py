@@ -315,3 +315,135 @@ class DataLoader:
         
         logger.info("Todas las visualizaciones generadas exitosamente")
         return outputs
+    
+    def plot_top_games_by_genre(self, genre, top_games_df):
+        """
+        Genera gráfico de barras para los top 5 juegos de un género
+        
+        Args:
+            genre (str): Nombre del género
+            top_games_df (pd.DataFrame): DataFrame con los top juegos del género
+        """
+        logger.info(f"Generando gráfico para género: {genre}")
+        
+        fig, ax = plt.subplots(figsize=(12, 8))
+        
+        # Crear gráfico de barras horizontal
+        colors = plt.cm.plasma(range(len(top_games_df)))
+        bars = ax.barh(range(len(top_games_df)), top_games_df['Plays_numeric'], color=colors, edgecolor='black', linewidth=1.2)
+        
+        # Configurar etiquetas
+        ax.set_yticks(range(len(top_games_df)))
+        ax.set_yticklabels(top_games_df['Title'], fontsize=11, fontweight='bold')
+        ax.set_xlabel('Número de Jugadas', fontsize=12, fontweight='bold')
+        ax.set_title(f'TOP 5 JUEGOS MÁS JUGADOS - {genre.upper()}', fontsize=16, fontweight='bold', pad=20)
+        
+        # Añadir valores en las barras
+        for i, (idx, row) in enumerate(top_games_df.iterrows()):
+            # Añadir jugadas
+            ax.text(row['Plays_numeric'], i, f" {row['Plays']} jugadas", 
+                   va='center', ha='left', fontsize=10, fontweight='bold')
+            # Añadir rating
+            rating_text = f"★ {row['Rating']:.1f}" if pd.notna(row['Rating']) else "★ N/A"
+            ax.text(row['Plays_numeric'] * 0.02, i, rating_text, 
+                   va='center', ha='left', fontsize=9, color='white', fontweight='bold',
+                   bbox=dict(boxstyle='round,pad=0.3', facecolor='darkblue', alpha=0.7))
+        
+        # Formato del eje x
+        ax.ticklabel_format(style='plain', axis='x')
+        ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x):,}'))
+        
+        # Invertir para que el más jugado esté arriba
+        ax.invert_yaxis()
+        
+        # Añadir grid
+        ax.grid(axis='x', alpha=0.3, linestyle='--')
+        
+        plt.tight_layout()
+        
+        # Nombre de archivo seguro
+        safe_genre_name = genre.replace(' ', '_').replace('&', 'and').lower()
+        output_path = os.path.join(self.output_dir, f'top_5_juegos_{safe_genre_name}.png')
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        logger.info(f"Gráfico guardado en: {output_path}")
+        return output_path
+    
+    def plot_top_games_multiple_genres(self, top_games_dict):
+        """
+        Genera gráficos para múltiples géneros
+        
+        Args:
+            top_games_dict (dict): Diccionario con género y DataFrame de juegos
+            
+        Returns:
+            list: Lista de rutas de archivos generados
+        """
+        logger.info(f"Generando gráficos para {len(top_games_dict)} géneros...")
+        
+        output_paths = []
+        for genre, top_games_df in top_games_dict.items():
+            path = self.plot_top_games_by_genre(genre, top_games_df)
+            output_paths.append(path)
+        
+        logger.info(f"Todos los gráficos generados: {len(output_paths)} archivos")
+        return output_paths
+    
+    def plot_combined_top_games(self, top_games_dict):
+        """
+        Genera un gráfico combinado con todos los géneros juntos
+        
+        Args:
+            top_games_dict (dict): Diccionario con género y DataFrame de juegos
+        """
+        logger.info("Generando gráfico combinado de todos los géneros...")
+        
+        # Crear figura con subplots
+        num_genres = len(top_games_dict)
+        fig, axes = plt.subplots(2, 3, figsize=(20, 12))
+        axes = axes.flatten()
+        
+        # Colores diferentes para cada género
+        color_maps = ['Blues', 'Greens', 'Reds', 'Purples', 'Oranges', 'YlOrBr']
+        
+        for idx, (genre, top_games_df) in enumerate(top_games_dict.items()):
+            ax = axes[idx]
+            
+            # Crear gráfico de barras
+            colors = plt.cm.get_cmap(color_maps[idx])(range(220, 256, 256//len(top_games_df)))
+            bars = ax.barh(range(len(top_games_df)), top_games_df['Plays_numeric'], 
+                          color=colors, edgecolor='black', linewidth=1)
+            
+            # Configurar etiquetas
+            ax.set_yticks(range(len(top_games_df)))
+            ax.set_yticklabels(top_games_df['Title'], fontsize=8)
+            ax.set_xlabel('Jugadas', fontsize=9, fontweight='bold')
+            ax.set_title(f'{genre}', fontsize=11, fontweight='bold', pad=10)
+            
+            # Añadir valores
+            for i, (_, row) in enumerate(top_games_df.iterrows()):
+                ax.text(row['Plays_numeric'], i, f" {row['Plays']}", 
+                       va='center', ha='left', fontsize=7)
+            
+            # Invertir eje Y
+            ax.invert_yaxis()
+            
+            # Formato del eje x
+            ax.ticklabel_format(style='plain', axis='x')
+            ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x/1000)}K' if x >= 1000 else f'{int(x)}'))
+            ax.grid(axis='x', alpha=0.2)
+        
+        # Título general
+        fig.suptitle('TOP 5 JUEGOS MÁS JUGADOS POR GÉNERO (6 CATEGORÍAS PRINCIPALES)', 
+                    fontsize=16, fontweight='bold', y=0.995)
+        
+        plt.tight_layout()
+        
+        output_path = os.path.join(self.output_dir, 'top_5_juegos_todas_categorias.png')
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        logger.info(f"Gráfico combinado guardado en: {output_path}")
+        return output_path
+
