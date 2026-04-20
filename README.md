@@ -82,6 +82,26 @@ pip install -r requirements.txt
 python main.py
 ```
 
+### Ejecucion en R (un solo archivo)
+Pipeline ETL completo en un unico archivo R:
+
+```bash
+Rscript etl_videojuegos.R
+```
+
+Opcionalmente puedes pasar ruta de CSV y carpeta de salida:
+
+```bash
+Rscript etl_videojuegos.R backloggd_games.csv output
+```
+
+### Plataforma Streamlit (presupuesto y rentabilidad)
+La app permite seleccionar un genero del dataset y estimar presupuesto, rentabilidad y calificacion de 0 a 5.
+
+```bash
+streamlit run streamlit_app.py
+```
+
 ### Salida Esperada
 El script ejecutará las tres fases del ETL y generará:
 - **Reporte textual** con estadísticas detalladas
