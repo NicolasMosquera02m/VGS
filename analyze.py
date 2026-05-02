@@ -15,7 +15,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'tranform'))
 sys.path.append(os.path.join(os.path.dirname(__file__), 'load'))
 
 from extract import DataExtractor
-from transform import DataTransformer
+from tranform import DataTransformer
 from load import DataLoader
 
 logger = logging.getLogger(__name__)

@@ -1,163 +1,44 @@
-import ast
+from pathlib import Path
+import time
 
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
-DATASET_PATH = "backloggd_games.csv"
+from model.rentability_model import (
+    estimate_business_metrics,
+    load_artifact,
+    save_artifact,
+    train_artifact_from_file,
+)
+
+PKL_PATH = "model/rentability_model.pkl"
+DATASET_CANDIDATES = ["backloggd_games.xlsx", "backloggd_games.xls", "backloggd_games.csv"]
 
 
-def convert_plays_to_numeric(value) -> float:
-    if pd.isna(value):
-        return 0.0
-
-    text = str(value).strip().upper().replace(",", "")
-    if not text:
-        return 0.0
-
-    try:
-        if text.endswith("K"):
-            return float(text[:-1]) * 1_000
-        if text.endswith("M"):
-            return float(text[:-1]) * 1_000_000
-        return float(text)
-    except ValueError:
-        return 0.0
+def find_dataset_source() -> str | None:
+    for candidate in DATASET_CANDIDATES:
+        if Path(candidate).exists():
+            return candidate
+    return None
 
 
-def parse_genres(genres_str) -> list[str]:
-    if pd.isna(genres_str):
-        return []
+@st.cache_resource
+def get_model_artifact(pkl_path: str):
+    model_path = Path(pkl_path)
+    if model_path.exists():
+        return load_artifact(pkl_path)
 
-    raw = str(genres_str).strip()
-    if not raw:
-        return []
-
-    try:
-        parsed = ast.literal_eval(raw)
-        if isinstance(parsed, list):
-            return [str(item).strip() for item in parsed if str(item).strip()]
-    except (ValueError, SyntaxError):
-        pass
-
-    return []
-
-
-@st.cache_data
-def load_dataset(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path, index_col=0)
-    df["Players_numeric"] = df["Plays"].apply(convert_plays_to_numeric)
-    df["Rating"] = pd.to_numeric(df["Rating"], errors="coerce")
-    df["Genres_list"] = df["Genres"].apply(parse_genres)
-    return df
-
-
-@st.cache_data
-def build_genre_stats(df: pd.DataFrame) -> pd.DataFrame:
-    rows = []
-    for genre in sorted({g for genres in df["Genres_list"] for g in genres}):
-        mask = df["Genres_list"].apply(lambda gs: genre in gs)
-        subset = df.loc[mask]
-        if subset.empty:
-            continue
-
-        rows.append(
-            {
-                "genre": genre,
-                "games_count": int(len(subset)),
-                "avg_players": float(subset["Players_numeric"].mean()),
-                "median_players": float(subset["Players_numeric"].median()),
-                "avg_rating": float(subset["Rating"].mean(skipna=True)),
-            }
+    dataset_path = find_dataset_source()
+    if not dataset_path:
+        raise FileNotFoundError(
+            "No existe PKL y no se encontro dataset fuente (.xlsx/.xls/.csv) para generarlo automaticamente."
         )
 
-    return pd.DataFrame(rows).sort_values("avg_players", ascending=False).reset_index(drop=True)
-
-
-def robust_normalize(value: float, low: float, high: float) -> float:
-    # Usa limites robustos para evitar que outliers dominen la escala.
-    if np.isclose(high, low) or np.isnan(low) or np.isnan(high):
-        return 0.5
-    return float(np.clip((value - low) / (high - low), 0.0, 1.0))
-
-
-def estimate_business_metrics(
-    stats_row: pd.Series,
-    budget_usd: float,
-    global_median_budget: float,
-    revenue_per_player: float,
-    marketing_multiplier: float,
-    development_years: int,
-    growth_years: int,
-    annual_growth_pct: float,
-    annual_decay_pct: float,
-    discount_rate_pct: float,
-    players_range: tuple[float, float],
-    rating_range: tuple[float, float],
-) -> dict:
-    base_avg_players = stats_row["avg_players"]
-    base_median_players = stats_row["median_players"]
-    avg_rating = stats_row["avg_rating"]
-
-    # Presupuesto y rating se modelan por separado para evitar dependencia directa.
-    budget_ratio = max(budget_usd, 1.0) / max(global_median_budget, 1.0)
-    budget_reach_factor = np.clip(np.log1p(budget_ratio) / np.log1p(6.0), 0.35, 1.35)
-    rating_demand_factor = np.clip(0.75 + (avg_rating - 3.0) * 0.18, 0.50, 1.20)
-
-    expected_players = base_avg_players * budget_reach_factor * marketing_multiplier * rating_demand_factor
-    expected_revenue = expected_players * revenue_per_player
-    estimated_profit_signed = expected_revenue - budget_usd
-    roi_signed = estimated_profit_signed / max(budget_usd, 1.0)
-    break_even_players = budget_usd / max(revenue_per_player, 1e-6)
-
-    # Proyeccion a futuro: crecimiento anual y decaimiento de interes.
-    annual_growth = annual_growth_pct / 100.0
-    annual_decay = annual_decay_pct / 100.0
-    discount_rate = discount_rate_pct / 100.0
-    net_change = annual_growth - annual_decay
-
-    growth_year_index = np.arange(1, growth_years + 1)
-    forecast_players = expected_players * np.power(1.0 + net_change, growth_year_index - 1)
-    forecast_players = np.clip(forecast_players, a_min=0.0, a_max=None)
-    forecast_revenue = forecast_players * revenue_per_player
-    # Los ingresos arrancan despues de los anios de desarrollo.
-    discount_periods = development_years + growth_year_index - 1
-    discount_factors = np.power(1.0 + discount_rate, discount_periods)
-    discounted_revenue = forecast_revenue / np.clip(discount_factors, 1e-6, None)
-
-    lifetime_revenue = float(np.sum(forecast_revenue))
-    lifetime_revenue_npv = float(np.sum(discounted_revenue))
-    lifetime_profit_signed = lifetime_revenue_npv - budget_usd
-    lifetime_roi_signed = lifetime_profit_signed / max(budget_usd, 1.0)
-
-    popularity_norm = robust_normalize(base_median_players, players_range[0], players_range[1])
-    rating_norm = robust_normalize(avg_rating, rating_range[0], rating_range[1])
-    roi_norm = robust_normalize(lifetime_roi_signed, -1.0, 1.5)
-
-    profitability_score = 0.60 * roi_norm + 0.25 * popularity_norm + 0.15 * rating_norm
-    profitability_score = float(np.clip(np.round(profitability_score, 3), 0.0, 1.0))
-
-    return {
-        "expected_players": expected_players,
-        "expected_revenue": expected_revenue,
-        "estimated_profit": estimated_profit_signed,
-        "roi": roi_signed,
-        "estimated_profit_signed": estimated_profit_signed,
-        "roi_signed": roi_signed,
-        "lifetime_revenue": lifetime_revenue,
-        "lifetime_revenue_npv": lifetime_revenue_npv,
-        "lifetime_profit": lifetime_profit_signed,
-        "lifetime_roi": lifetime_roi_signed,
-        "lifetime_profit_signed": lifetime_profit_signed,
-        "lifetime_roi_signed": lifetime_roi_signed,
-        "break_even_players": break_even_players,
-        "development_years": development_years,
-        "growth_years": growth_years,
-        "forecast_years": development_years + growth_year_index,
-        "forecast_players": forecast_players,
-        "forecast_revenue": forecast_revenue,
-        "profitability_score": profitability_score,
-    }
+    artifact = train_artifact_from_file(dataset_path)
+    save_artifact(artifact, pkl_path)
+    return artifact
 
 
 def score_label(score: float) -> str:
@@ -184,12 +65,132 @@ def roi_color(roi: float) -> str:
     return "#2a9d8f"
 
 
+def initialize_simulation_state() -> None:
+    if "simulation_enabled" not in st.session_state:
+        st.session_state.simulation_enabled = True
+    if "simulation_step" not in st.session_state:
+        st.session_state.simulation_step = 1
+    if "simulation_speed_seconds" not in st.session_state:
+        st.session_state.simulation_speed_seconds = 1.0
+    if "simulation_last_tick" not in st.session_state:
+        st.session_state.simulation_last_tick = time.time()
+    if "scenario_signature" not in st.session_state:
+        st.session_state.scenario_signature = None
+
+
+@st.fragment(run_every=1)
+def render_live_simulation(
+    estimation: dict,
+    total_budget_usd: float,
+    selected_genre: str,
+    development_years: int,
+    growth_years: int,
+) -> None:
+    max_step = len(estimation["forecast_years"])
+    current_step = int(np.clip(st.session_state.simulation_step, 1, max_step))
+
+    if st.session_state.simulation_enabled and current_step < max_step:
+        now = time.time()
+        elapsed = now - float(st.session_state.simulation_last_tick)
+        speed_seconds = max(float(st.session_state.simulation_speed_seconds), 0.5)
+        if elapsed >= speed_seconds:
+            steps_to_advance = max(1, int(elapsed // speed_seconds))
+            current_step = min(max_step, current_step + steps_to_advance)
+            st.session_state.simulation_step = current_step
+            st.session_state.simulation_last_tick = now
+    else:
+        st.session_state.simulation_last_tick = time.time()
+
+    visible_years = estimation["forecast_years"][:current_step]
+    visible_revenue = estimation["forecast_revenue"][:current_step]
+    visible_players = estimation["forecast_players"][:current_step]
+    cumulative_revenue = np.cumsum(visible_revenue)
+    cumulative_profit = cumulative_revenue - total_budget_usd
+    current_revenue = float(visible_revenue[-1])
+    current_players = float(visible_players[-1])
+    current_cumulative_revenue = float(cumulative_revenue[-1])
+    current_cumulative_profit = float(cumulative_profit[-1])
+    current_roi = current_cumulative_profit / max(total_budget_usd, 1.0)
+    current_calendar_year = pd.Timestamp.now().year + int(visible_years[-1]) - 1
+
+    st.markdown("### Simulación en vivo")
+    status_label = "En reproducción" if st.session_state.simulation_enabled else "Pausada"
+    st.caption(
+        f"Estado: {status_label} | Paso {current_step}/{max_step} | Género: {selected_genre}"
+    )
+
+    a, b, c, d = st.columns(4)
+    a.metric("Año de simulación", str(current_calendar_year))
+    b.metric("Jugadores actuales", f"{current_players:,.0f}")
+    c.metric("Ingreso acumulado", f"USD {current_cumulative_revenue:,.0f}")
+    d.metric("ROI acumulado", f"{current_roi * 100:.1f}%")
+
+    sim_fig = go.Figure()
+    sim_fig.add_trace(
+        go.Scatter(
+            x=estimation["forecast_years"],
+            y=np.cumsum(estimation["forecast_revenue"]),
+            mode="lines",
+            name="Trayectoria completa",
+            line=dict(color="#9aa0a6", dash="dot"),
+            hovertemplate="Paso %{x}<br>Ingreso acumulado USD %{y:,.0f}<extra></extra>",
+        )
+    )
+    sim_fig.add_trace(
+        go.Scatter(
+            x=visible_years,
+            y=cumulative_revenue,
+            mode="lines+markers",
+            name="Simulación actual",
+            line=dict(color="#2a9d8f", width=3),
+            marker=dict(size=9, color="#2a9d8f"),
+            hovertemplate="Paso %{x}<br>Ingreso acumulado USD %{y:,.0f}<extra></extra>",
+        )
+    )
+    sim_fig.add_trace(
+        go.Scatter(
+            x=[visible_years[-1]],
+            y=[current_cumulative_revenue],
+            mode="markers+text",
+            name="Punto actual",
+            marker=dict(size=16, color="#d62828", symbol="circle-open"),
+            text=[f"USD {current_cumulative_revenue:,.0f}"],
+            textposition="top center",
+            hovertemplate="Paso %{x}<br>Punto actual USD %{y:,.0f}<extra></extra>",
+        )
+    )
+    sim_fig.add_hline(y=total_budget_usd, line_dash="dash", line_color="#d62828")
+    sim_fig.update_layout(
+        title="Simulación temporal de rentabilidad",
+        xaxis_title="Paso del proyecto",
+        yaxis_title="Ingreso acumulado (USD)",
+        hovermode="x unified",
+    )
+    st.plotly_chart(sim_fig, use_container_width=True)
+
+    sim_table = pd.DataFrame(
+        {
+            "Paso": visible_years,
+            "Jugadores": np.round(visible_players).astype(int),
+            "Ingreso anual (USD)": np.round(visible_revenue, 0),
+            "Ingreso acumulado (USD)": np.round(cumulative_revenue, 0),
+            "Beneficio acumulado (USD)": np.round(cumulative_profit, 0),
+        }
+    )
+    st.dataframe(sim_table, use_container_width=True)
+
+    st.caption(
+        f"La simulación usa el mismo algoritmo del PKL y avanza cada {st.session_state.simulation_speed_seconds:.1f} segundos por paso."
+    )
+
+
 def build_suggestions(
     selected_genre: str,
     selected_row: pd.Series,
     estimation: dict,
     genre_stats_df: pd.DataFrame,
     budget_usd: float,
+    contingency_pct: float,
     revenue_per_player: float,
 ) -> list[str]:
     suggestions = []
@@ -209,6 +210,11 @@ def build_suggestions(
     suggestions.append(
         f"Para sostener este presupuesto en {selected_genre}, el ingreso por jugador deberia subir a ~USD {required_revenue_per_player:,.2f} (actual: USD {revenue_per_player:,.2f})."
     )
+
+    if contingency_pct > 0:
+        suggestions.append(
+            f"Estas usando un colchon de imprevistos de {contingency_pct:.1f}%. Mantenlo protegido y libera ese monto por hitos segun avance real del proyecto."
+        )
 
     if selected_row["avg_rating"] < 3.8:
         suggestions.append(
@@ -233,43 +239,64 @@ def build_suggestions(
 
 def main():
     st.set_page_config(page_title="Estimador de Rentabilidad de Juegos", layout="wide")
+    initialize_simulation_state()
 
-    st.title("Estimador de Presupuesto y Rentabilidad por Genero")
+    st.title("Plataforma de Rentabilidad con Modelo PKL")
     st.write(
-        "Selecciona un genero del dataset y ajusta el presupuesto para estimar ingresos, "
-        "beneficio y una calificacion de rentabilidad de 0 a 1."
+        "La app usa un artefacto PKL entrenado con el algoritmo actual. "
+        "Las graficas y metricas se actualizan en tiempo real al mover los controles."
     )
 
     try:
-        df = load_dataset(DATASET_PATH)
+        artifact = get_model_artifact(PKL_PATH)
     except FileNotFoundError:
-        st.error(f"No se encontro el archivo {DATASET_PATH} en la raiz del proyecto.")
+        st.error(
+            "No se encontro PKL ni dataset fuente para autoentrenamiento. "
+            "Agrega un archivo backloggd_games.xlsx/.xls/.csv en la raiz o ejecuta train_profitability_pkl.py"
+        )
         st.stop()
 
-    genre_stats_df = build_genre_stats(df)
+    genre_stats_df = artifact.genre_stats_df
     if genre_stats_df.empty:
         st.error("No se pudieron calcular estadisticas por genero.")
         st.stop()
 
-    # Rangos robustos para reducir sensibilidad a outliers.
-    players_q = genre_stats_df["median_players"].quantile([0.10, 0.90]).tolist()
-    rating_q = genre_stats_df["avg_rating"].quantile([0.10, 0.90]).tolist()
-    players_range = (float(players_q[0]), float(players_q[1]))
-    rating_range = (float(rating_q[0]), float(rating_q[1]))
-
-    global_median_budget = 1_500_000.0
+    players_range = artifact.players_range
+    rating_range = artifact.rating_range
+    global_median_budget = artifact.global_median_budget
 
     with st.sidebar:
         st.header("Parametros")
-        selected_genre = st.selectbox("Genero", options=genre_stats_df["genre"].tolist())
-        budget_usd = st.number_input(
-            "Presupuesto estimado (USD)",
-            min_value=1.01,
-            max_value=100_000_000.0,
+        st.caption(f"Fuente activa: {PKL_PATH}")
+        if st.button("Reentrenar PKL automaticamente"):
+            dataset_path = find_dataset_source()
+            if not dataset_path:
+                st.error("No hay dataset .xlsx/.xls/.csv disponible para reentrenar.")
+            else:
+                retrained = train_artifact_from_file(dataset_path)
+                save_artifact(retrained, PKL_PATH)
+                get_model_artifact.clear()
+                st.success(f"PKL reentrenado desde {dataset_path}")
+                st.rerun()
+
+        selected_genre = st.selectbox("Genero", options=sorted(genre_stats_df["genre"].tolist()))
+        budget_base_usd = st.number_input(
+            "Presupuesto normal (USD)",
+            min_value=1.0,
             value=2_000_000.0,
             step=1.0,
             format="%.2f",
         )
+        contingency_pct = st.slider(
+            "Colchon para imprevistos (%)",
+            min_value=0.0,
+            max_value=40.0,
+            value=10.0,
+            step=0.5,
+        )
+        contingency_amount_usd = budget_base_usd * contingency_pct / 100.0
+        st.caption(f"Presupuesto normal: USD {budget_base_usd:,.2f}")
+        st.caption(f"Colchon para riesgos: USD {contingency_amount_usd:,.2f}")
         revenue_per_player = st.slider(
             "Ingreso estimado por jugador (USD)",
             min_value=0.1,
@@ -320,11 +347,46 @@ def main():
             step=1.0,
         )
 
+        st.divider()
+        st.subheader("Simulacion en vivo")
+        st.session_state.simulation_enabled = st.toggle(
+            "Reproducir simulación",
+            value=st.session_state.simulation_enabled,
+        )
+        st.session_state.simulation_speed_seconds = st.slider(
+            "Velocidad de avance (segundos por paso)",
+            min_value=0.5,
+            max_value=5.0,
+            value=float(st.session_state.simulation_speed_seconds),
+            step=0.5,
+        )
+        if st.button("Reiniciar simulación"):
+            st.session_state.simulation_step = 1
+            st.session_state.simulation_last_tick = time.time()
+
+    scenario_signature = (
+        selected_genre,
+        budget_base_usd,
+        contingency_pct,
+        revenue_per_player,
+        marketing_multiplier,
+        development_years,
+        growth_years,
+        annual_growth_pct,
+        annual_decay_pct,
+        discount_rate_pct,
+    )
+    if st.session_state.scenario_signature != scenario_signature:
+        st.session_state.scenario_signature = scenario_signature
+        st.session_state.simulation_step = 1
+        st.session_state.simulation_last_tick = time.time()
+
     selected_row = genre_stats_df.loc[genre_stats_df["genre"] == selected_genre].iloc[0]
+    total_budget_usd = budget_base_usd + contingency_amount_usd
 
     estimation = estimate_business_metrics(
         stats_row=selected_row,
-        budget_usd=budget_usd,
+        budget_usd=total_budget_usd,
         global_median_budget=global_median_budget,
         revenue_per_player=revenue_per_player,
         marketing_multiplier=marketing_multiplier,
@@ -350,6 +412,11 @@ def main():
     c3.metric("Ingreso futuro (NPV)", f"USD {estimation['lifetime_revenue_npv']:,.0f}")
     c4.metric("Beneficio futuro", f"USD {estimation['lifetime_profit']:,.0f}")
 
+    c5, c6, c7 = st.columns(3)
+    c5.metric("Presupuesto normal", f"USD {budget_base_usd:,.0f}")
+    c6.metric("Colchon de riesgos", f"USD {contingency_amount_usd:,.0f}")
+    c7.metric("Presupuesto total", f"USD {total_budget_usd:,.0f}")
+
     st.markdown(
         f"""
         <div style='padding:0.6rem 0.9rem;border-radius:0.5rem;background:{roi_card_color};color:white;font-weight:700;margin-bottom:0.7rem;'>
@@ -372,19 +439,113 @@ def main():
     st.caption("Rojo: no rentable. Verde: rentable.")
 
     st.info(
-        f"Punto de equilibrio estimado: {estimation['break_even_players']:,.0f} jugadores para cubrir el presupuesto. "
-        f"(con {development_years} anios de desarrollo y {growth_years} años de crecimiento)"
+        f"Punto de equilibrio estimado: {estimation['break_even_players']:,.0f} jugadores para cubrir el presupuesto total. "
+        f"(con {development_years} años de desarrollo y {growth_years} años de crecimiento)"
     )
 
-    st.markdown("### Proyeccion anual")
+    st.markdown("### Proyección anual")
+    current_year = pd.Timestamp.now().year
     forecast_df = pd.DataFrame(
         {
-            "Anio": estimation["forecast_years"],
+            "Año": estimation["forecast_years"],
+            "Año calendario": current_year + estimation["forecast_years"] - 1,
             "Jugadores estimados": np.round(estimation["forecast_players"]).astype(int),
             "Ingreso estimado (USD)": np.round(estimation["forecast_revenue"], 0),
         }
     )
+
+    cumulative_revenue = np.cumsum(estimation["forecast_revenue"])
+    cumulative_profit = cumulative_revenue - total_budget_usd
+    roi_by_year = cumulative_profit / max(total_budget_usd, 1.0)
+
+    profitability_df = pd.DataFrame(
+        {
+            "Año": estimation["forecast_years"],
+            "Año calendario": current_year + estimation["forecast_years"] - 1,
+            "Ingreso anual (USD)": np.round(estimation["forecast_revenue"], 0),
+            "Ingreso acumulado (USD)": np.round(cumulative_revenue, 0),
+            "Beneficio acumulado (USD)": np.round(cumulative_profit, 0),
+            "ROI acumulado (%)": np.round(roi_by_year * 100, 2),
+        }
+    )
     st.dataframe(forecast_df, use_container_width=True)
+
+    st.markdown("### Gráficas de rentabilidad del proyecto")
+    st.caption("Curvas interactivas con puntos por año y datos de hover en tiempo real.")
+
+    x_axis = profitability_df["Año calendario"]
+
+    income_fig = go.Figure()
+    income_fig.add_trace(
+        go.Scatter(
+            x=x_axis,
+            y=profitability_df["Ingreso anual (USD)"],
+            mode="lines+markers",
+            name="Ingreso anual",
+            hovertemplate="Año %{x}<br>Ingreso anual USD %{y:,.0f}<extra></extra>",
+        )
+    )
+    income_fig.add_trace(
+        go.Scatter(
+            x=x_axis,
+            y=profitability_df["Ingreso acumulado (USD)"],
+            mode="lines+markers",
+            name="Ingreso acumulado",
+            hovertemplate="Año %{x}<br>Ingreso acumulado USD %{y:,.0f}<extra></extra>",
+        )
+    )
+    income_fig.update_layout(
+        title="Ingresos del proyecto en el tiempo",
+        xaxis_title="Año calendario",
+        yaxis_title="USD",
+        hovermode="x unified",
+    )
+    st.plotly_chart(income_fig, use_container_width=True)
+
+    profit_fig = go.Figure()
+    profit_fig.add_trace(
+        go.Bar(
+            x=x_axis,
+            y=profitability_df["Beneficio acumulado (USD)"],
+            name="Beneficio acumulado",
+            hovertemplate="Año %{x}<br>Beneficio acumulado USD %{y:,.0f}<extra></extra>",
+        )
+    )
+    profit_fig.update_layout(
+        title="Impacto acumulado en la rentabilidad",
+        xaxis_title="Año calendario",
+        yaxis_title="USD",
+    )
+    st.plotly_chart(profit_fig, use_container_width=True)
+
+    roi_fig = go.Figure()
+    roi_fig.add_trace(
+        go.Scatter(
+            x=x_axis,
+            y=profitability_df["ROI acumulado (%)"],
+            mode="lines+markers",
+            name="ROI acumulado",
+            hovertemplate="Año %{x}<br>ROI %{y:.2f}%<extra></extra>",
+        )
+    )
+    roi_fig.add_hline(y=0, line_dash="dash", line_color="#d62828")
+    roi_fig.update_layout(
+        title="ROI acumulado por año",
+        xaxis_title="Año calendario",
+        yaxis_title="ROI (%)",
+    )
+    st.plotly_chart(roi_fig, use_container_width=True)
+
+    st.markdown("### Tabla consolidada de rentabilidad")
+    st.dataframe(profitability_df, use_container_width=True)
+
+    render_live_simulation(
+        estimation=estimation,
+        total_budget_usd=total_budget_usd,
+        selected_genre=selected_genre,
+        development_years=development_years,
+        growth_years=growth_years,
+    )
 
     st.markdown("### Sugerencias para mejorar rentabilidad")
     suggestions = build_suggestions(
@@ -392,7 +553,8 @@ def main():
         selected_row=selected_row,
         estimation=estimation,
         genre_stats_df=genre_stats_df,
-        budget_usd=budget_usd,
+        budget_usd=total_budget_usd,
+        contingency_pct=contingency_pct,
         revenue_per_player=revenue_per_player,
     )
     for idx, suggestion in enumerate(suggestions, start=1):

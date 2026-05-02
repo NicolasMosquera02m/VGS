@@ -31,7 +31,12 @@ VGS/
 ├── main.py                       # Script principal del ETL
 ├── requirements.txt              # Dependencias Python
 ├── README.md                     # Este archivo
+├── train_profitability_pkl.py    # Entrenamiento y guardado del modelo PKL
 ├── etl_execution.log            # Log de ejecución (generado)
+│
+├── model/
+│   ├── rentability_model.py     # Algoritmo y serialización del artefacto PKL
+│   └── rentability_model.pkl    # Modelo entrenado (generado)
 │
 ├── extract/
 │   └── extract.py               # Módulo de extracción
@@ -96,11 +101,29 @@ Rscript etl_videojuegos.R backloggd_games.csv output
 ```
 
 ### Plataforma Streamlit (presupuesto y rentabilidad)
-La app permite seleccionar un genero del dataset y estimar presupuesto, rentabilidad y calificacion de 0 a 5.
+La app usa primero el archivo PKL del modelo (`model/rentability_model.pkl`) para estimar presupuesto, rentabilidad y calificacion de 0 a 1.
+
+Incluye:
+- Campo de **presupuesto normal en USD** desde 1 dólar en adelante, con edición libre y dos decimales.
+- Campo de **colchon para imprevistos (%)** que se muestra como monto aparte y se suma al total del proyecto.
+- **Graficas interactivas de rentabilidad** por anio (con puntos y hover): ingreso anual/acumulado, beneficio acumulado y ROI acumulado.
+- Tabla consolidada de rentabilidad para analizar el horizonte completo.
+- Reentrenamiento automatico del PKL desde Excel/CSV cuando se requiera.
+- **Modo de simulacion en vivo** con reproduccion, velocidad configurable y avance automatico por pasos.
 
 ```bash
 streamlit run streamlit_app.py
 ```
+
+### Entrenar/actualizar el PKL (manual)
+Si deseas regenerar el modelo desde un archivo fuente (Excel o CSV):
+
+```bash
+python train_profitability_pkl.py --dataset backloggd_games.xlsx
+```
+
+Tambien puedes omitir `--dataset` y el script buscara automaticamente:
+`backloggd_games.xlsx`, `backloggd_games.xls` o `backloggd_games.csv`.
 
 ### Salida Esperada
 El script ejecutará las tres fases del ETL y generará:
