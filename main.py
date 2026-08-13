@@ -6,6 +6,7 @@ Punto de entrada para el proceso completo de Extracción, Transformación y Carg
 
 import sys
 import logging
+from datetime import datetime
 
 from analyze import VideoGameAnalyzer
 
@@ -45,6 +46,7 @@ def main():
     """Función principal que ejecuta el pipeline ETL"""
     print_banner()
     logger.info("Iniciando proceso ETL...")
+    start_time = datetime.now()
     
     try:
         # Crear instancia del analizador
@@ -101,7 +103,15 @@ def main():
             print(f"  • {name}: {path}")
         
         # FINALIZACIÓN
-        execution = analyzer.results['execution']
+        end_time = datetime.now()
+        execution = {
+            'start_time': start_time,
+            'end_time': end_time,
+            'duration': (end_time - start_time).total_seconds(),
+            'status': 'success'
+        }
+        analyzer.results['execution'] = execution
+        
         print_section("ETL COMPLETADO EXITOSAMENTE")
         print(f"✓ Tiempo de ejecución: {execution['duration']:.2f} segundos")
         print(f"✓ Fecha: {execution['end_time'].strftime('%Y-%m-%d %H:%M:%S')}")
