@@ -65,6 +65,70 @@ def roi_color(roi: float) -> str:
     return "#2a9d8f"
 
 
+def apply_responsive_styles() -> None:
+    st.markdown(
+        """
+        <style>
+        [data-testid="stAppViewContainer"] {
+            overflow-x: hidden;
+        }
+
+        [data-testid="stMetric"] {
+            min-width: 0;
+            overflow-wrap: anywhere;
+        }
+
+        [data-testid="stDataFrame"] {
+            max-width: 100%;
+        }
+
+        @media (max-width: 640px) {
+            [data-testid="stAppViewContainer"] .main .block-container {
+                padding: 1rem 0.8rem 3rem;
+            }
+
+            [data-testid="stHorizontalBlock"] {
+                flex-direction: column;
+                gap: 0.75rem;
+            }
+
+            [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+                width: 100% !important;
+                min-width: 100% !important;
+                flex: 1 1 100% !important;
+            }
+
+            [data-testid="stMetricValue"] {
+                font-size: 1.45rem;
+            }
+
+            [data-testid="stPlotlyChart"] {
+                width: 100%;
+                overflow-x: auto;
+            }
+
+            [data-testid="stSidebarContent"] {
+                padding: 1rem 0.8rem 2rem;
+            }
+
+            h1 {
+                font-size: 1.8rem;
+            }
+
+            h2 {
+                font-size: 1.35rem;
+            }
+
+            h3 {
+                font-size: 1.1rem;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def initialize_simulation_state() -> None:
     if "simulation_enabled" not in st.session_state:
         st.session_state.simulation_enabled = True
@@ -238,7 +302,12 @@ def build_suggestions(
 
 
 def main():
-    st.set_page_config(page_title="Estimador de Rentabilidad de Juegos", layout="wide")
+    st.set_page_config(
+        page_title="Estimador de Rentabilidad de Juegos",
+        layout="wide",
+        initial_sidebar_state="collapsed",
+    )
+    apply_responsive_styles()
     initialize_simulation_state()
 
     st.title("Plataforma de Rentabilidad con Modelo PKL")

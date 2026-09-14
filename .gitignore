@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+.gradle/
+android-wrapper/build/
+android-wrapper/.idea/
+android-wrapper/local.properties
