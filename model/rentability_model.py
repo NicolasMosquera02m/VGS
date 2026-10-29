@@ -13,6 +13,41 @@ class RentabilityModelArtifact:
     players_range: tuple[float, float]
     rating_range: tuple[float, float]
     global_median_budget: float = 1_500_000.0
+    indie_only: bool = False
+    popularity_cap_quantile: float = 0.95
+    popularity_cap_players: float = 0.0
+
+
+AAA_TITLE_PATTERNS = (
+    "grand theft auto",
+    "gta ",
+    "call of duty",
+    "red dead redemption",
+    "assassin's creed",
+    "assassins creed",
+    "battlefield",
+    "fifa ",
+    "ea sports fc",
+    "nba 2k",
+    "madden nfl",
+    "far cry",
+    "halo ",
+    "forza ",
+    "destiny",
+    "the last of us",
+    "god of war",
+    "uncharted",
+    "resident evil",
+    "monster hunter",
+    "cyberpunk 2077",
+    "elden ring",
+    "starfield",
+)
+
+
+def is_known_aaa_title(title: str) -> bool:
+    normalized = str(title).strip().lower()
+    return any(pattern in normalized for pattern in AAA_TITLE_PATTERNS)
 
 
 def convert_plays_to_numeric(value) -> float:
@@ -70,7 +105,14 @@ def load_dataset(path: str) -> pd.DataFrame:
     df["Players_numeric"] = df["Plays"].apply(convert_plays_to_numeric)
     df["Rating"] = pd.to_numeric(df["Rating"], errors="coerce")
     df["Genres_list"] = df["Genres"].apply(parse_genres)
-    return df
+    df = df[~df["Title"].apply(is_known_aaa_title)].copy()
+    if df.empty:
+        raise ValueError("El dataset no contiene juegos después de excluir títulos AAA conocidos.")
+    popularity_cap = float(df["Players_numeric"].quantile(0.95))
+    filtered_df = df[df["Players_numeric"] <= popularity_cap].copy()
+    if filtered_df.empty:
+        raise ValueError("El filtro de popularidad eliminó todos los juegos del dataset.")
+    return filtered_df
 
 
 def build_genre_stats(df: pd.DataFrame) -> pd.DataFrame:
@@ -106,10 +148,14 @@ def train_artifact_from_file(dataset_path: str) -> RentabilityModelArtifact:
     players_range = (float(players_q[0]), float(players_q[1]))
     rating_range = (float(rating_q[0]), float(rating_q[1]))
 
+    popularity_cap = float(df["Players_numeric"].quantile(0.95))
     return RentabilityModelArtifact(
         genre_stats_df=genre_stats_df,
         players_range=players_range,
         rating_range=rating_range,
+        indie_only=False,
+        popularity_cap_quantile=0.95,
+        popularity_cap_players=popularity_cap,
     )
 
 
@@ -126,6 +172,8 @@ def load_artifact(path: str) -> RentabilityModelArtifact:
 
     if not isinstance(artifact, RentabilityModelArtifact):
         raise ValueError("El archivo PKL no contiene un artefacto valido de rentabilidad.")
+    if getattr(artifact, "indie_only", False):
+        raise ValueError("El artefacto existente usa el filtro anterior de solo juegos Indie.")
     return artifact
 
 

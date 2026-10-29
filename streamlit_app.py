@@ -34,6 +34,13 @@ from model.rentability_model import (
     save_artifact,
     train_artifact_from_file,
 )
+from steam_api import (
+    SteamApiError,
+    get_game_details,
+    is_excluded_large_game,
+    normalize_game,
+    search_games,
+)
 
 PKL_PATH = "model/rentability_model.pkl"
 DATASET_CANDIDATES = ["backloggd_games.xlsx", "backloggd_games.xls", "backloggd_games.csv"]
@@ -46,11 +53,24 @@ def find_dataset_source() -> str | None:
     return None
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def search_games_cached(term: str) -> list[dict]:
+    return search_games(term)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_game_details_cached(app_id: int) -> dict:
+    return get_game_details(app_id)
+
+
 @st.cache_resource
 def get_model_artifact(pkl_path: str):
     model_path = Path(pkl_path)
     if model_path.exists():
-        return load_artifact(pkl_path)
+        try:
+            return load_artifact(pkl_path)
+        except ValueError:
+            pass
 
     dataset_path = find_dataset_source()
     if not dataset_path:
@@ -263,11 +283,68 @@ def render_dashboard():
     st.set_page_config(page_title="Estimador de Rentabilidad de Juegos", layout="wide")
     initialize_simulation_state()
 
-    st.title("Plataforma de Rentabilidad con Modelo PKL")
+    st.title("Plataforma de Rentabilidad para Juegos Indie y AA")
     st.write(
-        "La app usa un artefacto PKL entrenado con el algoritmo actual. "
+        "La app excluye franquicias AAA conocidas y el 5% superior de popularidad para "
+        "estimar inversiones indie y AA. "
         "Las graficas y metricas se actualizan en tiempo real al mover los controles."
     )
+
+    st.markdown("## Datos en vivo desde Steam")
+    st.caption(
+        "Consulta gratuita de la tienda de Steam. Los resultados se almacenan en caché durante 10 minutos."
+    )
+    steam_term = st.text_input(
+        "Buscar juego en Steam",
+        placeholder="Ejemplo: Hollow Knight o Portal 2",
+        key="steam_search_term",
+    )
+    if steam_term.strip():
+        try:
+            results = search_games_cached(steam_term.strip())
+            if not results:
+                st.info("No se encontraron juegos para esa búsqueda.")
+            else:
+                labels = {
+                    f"{item['name']} (AppID {item['id']})": item["id"]
+                    for item in results[:10]
+                }
+                selected_label = st.selectbox("Resultado", list(labels), key="steam_result")
+                if st.button("Consultar detalles en Steam", key="steam_details"):
+                    raw_details = get_game_details_cached(labels[selected_label])
+                    if is_excluded_large_game(raw_details):
+                        st.error(
+                            "Este título pertenece a una franquicia AAA excluida para "
+                            "no distorsionar las métricas de inversión indie."
+                        )
+                    else:
+                        st.session_state.steam_details = normalize_game(raw_details)
+        except SteamApiError as error:
+            st.error(str(error))
+
+    if st.session_state.get("steam_details"):
+        details = st.session_state.steam_details
+        if details["header_image"]:
+            st.image(details["header_image"], width=460)
+        st.subheader(details["name"])
+        st.write(details["short_description"])
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {"Dato": "Géneros", "Valor": details["genres"] or "No disponible"},
+                    {"Dato": "Plataformas", "Valor": details["platforms"] or "No disponible"},
+                    {"Dato": "Lanzamiento", "Valor": details["release_date"]},
+                    {"Dato": "Precio", "Valor": details["price"]},
+                    {"Dato": "Metacritic", "Valor": details["metacritic"]},
+                    {"Dato": "Desarrolladores", "Valor": details["developers"]},
+                    {"Dato": "Publicador", "Valor": details["publisher"]},
+                ]
+            ),
+            hide_index=True,
+            use_container_width=True,
+        )
+        st.link_button("Abrir página del juego en Steam", details["store_url"])
+        st.divider()
 
     try:
         artifact = get_model_artifact(PKL_PATH)
@@ -289,7 +366,7 @@ def render_dashboard():
 
     with st.sidebar:
         st.header("Parametros")
-        st.caption(f"Fuente activa: {PKL_PATH}")
+        st.caption(f"Fuente activa: {PKL_PATH} | Filtro: sin AAA + percentil 95 de popularidad")
         if st.button("Reentrenar PKL automaticamente"):
             dataset_path = find_dataset_source()
             if not dataset_path:
@@ -322,7 +399,7 @@ def render_dashboard():
         revenue_per_player = st.slider(
             "Ingreso estimado por jugador (USD)",
             min_value=0.1,
-            max_value=10.0,
+            max_value=50.0,
             value=1.8,
             step=0.1,
         )

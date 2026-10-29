@@ -129,6 +129,8 @@ Cambia esta contraseña desde **Mi perfil** después del primer inicio de sesió
 - Sesiones persistidas en SQLite mediante token, expiración absoluta y expiración por inactividad configurable.
 - Recuperación de contraseña mediante token de un solo uso (en producción debe enviarse por correo).
 - Registro público de usuarios con asignación automática del rol estándar `user`.
+- Consulta de juegos mediante la API pública de Steam, con caché de 10 minutos y enlace a la tienda.
+- Modelo de rentabilidad orientado a inversiones indie y AA: excluye franquicias AAA conocidas y el 5% superior de popularidad para evitar que títulos de presupuesto extremo distorsionen las métricas.
 - Roles y permisos múltiples por usuario, administración de roles y asignación de permisos.
 - Registro de auditoría de inicios de sesión, cambios administrativos, recuperación y política de sesiones.
 - Perfil para actualizar correo y contraseña, además de validación de carga para rechazar ejecutables disfrazados.
