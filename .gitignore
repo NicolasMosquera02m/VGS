@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.db
+*.db-shm
+*.db-wal
+*.log
+.streamlit/
+venv/
+.venv/
+env/
+.env
+*.xlsx
+*.xls
