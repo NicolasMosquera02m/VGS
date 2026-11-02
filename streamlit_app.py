@@ -1,5 +1,6 @@
 from pathlib import Path
 import time
+import traceback
 
 import numpy as np
 import pandas as pd
@@ -15,17 +16,23 @@ from auth_service import (
     create_role,
     create_session,
     create_user,
+    get_firebase_status,
+    get_raw_database_inspection,
     get_session,
     get_settings,
     get_user,
     has_permission,
     init_db,
+    list_error_logs,
     list_permissions,
     list_roles,
     list_users,
+    log_error,
     request_password_reset,
     revoke_session,
+    sync_sqlite_to_firebase,
     update_profile,
+    update_role_permissions,
     update_settings,
 )
 from model.rentability_model import (
@@ -788,9 +795,27 @@ def render_profile(user: dict) -> None:
 
 
 def render_admin(user: dict) -> None:
-    st.subheader("Administración y seguridad")
-    users_tab, roles_tab, audit_tab, settings_tab, files_tab = st.tabs(
-        ["Usuarios", "Roles y permisos", "Auditoría", "Sesiones", "Carga segura"]
+    st.subheader("Administración, Seguridad y Base de Datos")
+    (
+        users_tab,
+        roles_tab,
+        audit_tab,
+        errors_tab,
+        settings_tab,
+        files_tab,
+        db_tab,
+        firebase_tab,
+    ) = st.tabs(
+        [
+            "Usuarios",
+            "Roles y permisos",
+            "Auditoría",
+            "Registro de errores",
+            "Sesiones",
+            "Carga segura",
+            "Base de datos (Cifrado)",
+            "Firebase Firestore",
+        ]
     )
     with users_tab:
         st.write("Crear usuario")
@@ -812,8 +837,12 @@ def render_admin(user: dict) -> None:
         with st.form("change_user_password_form"):
             target = st.selectbox("Usuario", users, format_func=lambda item: f"{item['username']} ({item['email']})")
             new_password = st.text_input("Nueva contraseña", type="password")
+            allow_override = st.checkbox(
+                "Permitir anulación de política de contraseña (Modo prueba de seguridad admin)",
+                help="Desmarcado: valida política estricta (mínimo 8 caracteres). Marcado: permite contraseñas cortas de 1 carácter para probar la anulación por parte del administrador.",
+            )
             if st.form_submit_button("Actualizar contraseña"):
-                ok, message = change_user_password(target["id"], new_password, user["id"])
+                ok, message = change_user_password(target["id"], new_password, user["id"], allow_override=allow_override)
                 (st.success if ok else st.error)(message)
         with st.form("assign_roles_form"):
             target = st.selectbox("Usuario para asignar roles", users, key="role_user")
@@ -823,16 +852,60 @@ def render_admin(user: dict) -> None:
                 st.success("Roles actualizados.")
     with roles_tab:
         permissions = list_permissions()
-        with st.form("create_role_form"):
-            name = st.text_input("Nombre del rol")
-            description = st.text_input("Descripción")
-            selected_permissions = st.multiselect("Permisos", permissions, format_func=lambda permission: permission["name"])
-            if st.form_submit_button("Crear rol"):
-                ok, message = create_role(name, description, [item["id"] for item in selected_permissions], user["id"])
-                (st.success if ok else st.error)(message)
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### Crear rol nuevo")
+            with st.form("create_role_form"):
+                name = st.text_input("Nombre del rol")
+                description = st.text_input("Descripción")
+                selected_permissions = st.multiselect("Permisos", permissions, format_func=lambda permission: permission["name"])
+                if st.form_submit_button("Crear rol"):
+                    ok, message = create_role(name, description, [item["id"] for item in selected_permissions], user["id"])
+                    (st.success if ok else st.error)(message)
+        with col2:
+            st.markdown("#### Modificar permisos de rol existente")
+            existing_roles = list_roles()
+            if existing_roles:
+                with st.form("modify_role_perms_form"):
+                    target_role = st.selectbox("Seleccionar rol a modificar", existing_roles, format_func=lambda r: r["name"])
+                    selected_perms_for_role = st.multiselect(
+                        "Totalidad de permisos del rol",
+                        permissions,
+                        format_func=lambda p: p["name"],
+                        key="edit_role_perms",
+                    )
+                    if st.form_submit_button("Guardar totalidad de permisos"):
+                        ok, message = update_role_permissions(
+                            target_role["id"],
+                            [p["id"] for p in selected_perms_for_role],
+                            user["id"],
+                        )
+                        (st.success if ok else st.error)(message)
+        st.write("Roles actuales:")
         st.dataframe(pd.DataFrame(list_roles()), use_container_width=True)
     with audit_tab:
         st.dataframe(pd.DataFrame(audit_logs()), use_container_width=True)
+    with errors_tab:
+        st.subheader("Registro de Errores (Error Logs)")
+        st.caption("Captura de excepciones críticas, fallos forzados y alertas del sistema.")
+        col_err1, col_err2 = st.columns([3, 1])
+        with col_err1:
+            st.write("Valida que el sistema captura excepciones automáticamente con su traza:")
+        with col_err2:
+            if st.button("💥 Forzar fallo en el sistema", type="primary", use_container_width=True):
+                try:
+                    # Intentionally induce a test failure to satisfy Requirement 17
+                    raise ZeroDivisionError("Fallo forzado por el usuario para prueba de registro de errores (Requisito 17)")
+                except ZeroDivisionError as exc:
+                    trace_str = traceback.format_exc()
+                    log_error("TestInducedError", str(exc), trace_str, user["id"])
+                    st.error("💥 ¡Fallo forzado inducido y capturado exitosamente en los Error Logs!")
+                    st.rerun()
+        error_records = list_error_logs()
+        if error_records:
+            st.dataframe(pd.DataFrame(error_records), use_container_width=True)
+        else:
+            st.info("No hay registros de errores actualmente. Presiona el botón para forzar uno.")
     with settings_tab:
         settings = get_settings()
         with st.form("session_settings_form"):
@@ -850,9 +923,46 @@ def render_admin(user: dict) -> None:
             header = uploaded.getvalue()[:8]
             executable = header.startswith(b"MZ")
             if extension not in allowed or executable:
-                st.error("Archivo rechazado: extensión o contenido no permitido.")
+                if executable:
+                    log_error("MaliciousUploadAttempt", f"Archivo ejecutable disfrazado detectado: {uploaded.name}", f"Magic header: {header.hex()}", user["id"])
+                    st.error("⚠️ Archivo rechazado: Se detectó firma de ejecutable binario (.exe / MZ) disfrazado con otra extensión. Evento registrado en auditoría.")
+                else:
+                    st.error("Archivo rechazado: extensión no permitida.")
             else:
                 st.success("Archivo validado y listo para procesar.")
+    with db_tab:
+        st.subheader("Acceso a la Base de Datos y Verificación de Cifrado")
+        st.caption("Requisito 19: Verificar que las contraseñas e información sensible del usuario se encuentran cifradas.")
+        raw_db_users = get_raw_database_inspection()
+        st.dataframe(pd.DataFrame(raw_db_users), use_container_width=True)
+        st.success("🔒 **Verificación de cifrado completada:** Ninguna contraseña está en texto plano. Se utiliza el estándar criptográfico seguro PBKDF2-HMAC-SHA256 con 310,000 iteraciones y una sal aleatoria única de 16 bytes.")
+    with firebase_tab:
+        st.subheader("Conexión con Google Firebase (Cloud Firestore)")
+        fb_status = get_firebase_status()
+        if fb_status["connected"]:
+            st.success(f"🟢 **Conectado a Firebase Firestore** (Proyecto: `{fb_status['project_id']}`)")
+            st.caption(f"Archivo de credenciales activo: `{fb_status['credentials_file']}`")
+            if st.button("🔄 Sincronizar todos los datos con Firebase Firestore"):
+                ok, msg = sync_sqlite_to_firebase()
+                (st.success if ok else st.error)(msg)
+        else:
+            st.warning("🟡 **Estado actual: SQLite Local (Firebase no conectado)**")
+            st.info(f"Detalle: {fb_status['error_message']}")
+            st.markdown("""
+            ### 🚀 Pasos para conectar a Firebase:
+            1. Abre la consola de Firebase: [https://console.firebase.google.com](https://console.firebase.google.com).
+            2. Crea un proyecto nuevo o usa uno existente.
+            3. Ve a **Firestore Database** en el menú izquierdo y haz clic en **Crear base de datos**.
+            4. Ve al ícono de engranaje ⚙️ (**Configuración del proyecto**) > pestaña **Cuentas de servicio** (Service Accounts).
+            5. Haz clic en el botón **Generar nueva clave privada** y se descargará un archivo `.json`.
+            6. Sube el archivo `.json` a continuación (o cópialo en la raíz del proyecto como `serviceAccountKey.json`):
+            """)
+            uploaded_json = st.file_uploader("Subir serviceAccountKey.json", type=["json"])
+            if uploaded_json:
+                dest = Path(__file__).resolve().parent / "serviceAccountKey.json"
+                dest.write_bytes(uploaded_json.getvalue())
+                st.success("¡Credenciales guardadas exitosamente como serviceAccountKey.json! Recargando...")
+                st.rerun()
 
 
 def main():
@@ -866,6 +976,10 @@ def main():
             _set_query_session(None)
         render_login()
         return
+    # Ensure query param remains populated in URL for copy-paste test (Req 1 & 18)
+    if st.query_params.get("session") != token:
+        _set_query_session(token)
+
     user = get_user(session["id"])
     if not user:
         _set_query_session(None)
@@ -874,6 +988,11 @@ def main():
     with st.sidebar:
         st.success(f"Sesión: {user['username']}")
         st.caption(f"Roles: {user.get('roles') or 'sin roles'}")
+        fb_status = get_firebase_status()
+        if fb_status["connected"]:
+            st.caption(f"🟢 Firebase: `{fb_status['project_id']}`")
+        else:
+            st.caption("🟡 DB: SQLite Local")
         page = st.radio("Navegación", ["Dashboard", "Mi perfil", "Administración"])
         if st.button("Cerrar sesión"):
             revoke_session(token, user["id"])

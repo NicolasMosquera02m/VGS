@@ -11,3 +11,6 @@ env/
 .env
 *.xlsx
 *.xls
+serviceAccountKey*.json
+*credentials*.json
+firebase*.json
