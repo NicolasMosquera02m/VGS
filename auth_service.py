@@ -610,11 +610,15 @@ def assign_roles(user_id: int, role_ids: list[int], actor_id: int) -> None:
         _sync_firestore_doc("users", str(user_id), {"role_ids": role_ids})
 
 
-def request_password_reset(identifier: str) -> str | None:
+def request_password_reset_details(identifier: str) -> tuple[str | None, str, str]:
+    """Generates a password reset token and returns (token, email, username)."""
     with _db() as connection:
-        row = connection.execute("SELECT id FROM users WHERE username=? OR email=?", (identifier.strip(), identifier.strip())).fetchone()
+        row = connection.execute(
+            "SELECT id, username, email FROM users WHERE username=? OR email=?",
+            (identifier.strip(), identifier.strip()),
+        ).fetchone()
         if not row:
-            return None
+            return None, "", ""
         token = secrets.token_urlsafe(24)
         thash = _token_hash(token)
         exp_iso = _iso(_now() + timedelta(minutes=15))
@@ -629,7 +633,12 @@ def request_password_reset(identifier: str) -> str | None:
             "expires_at": exp_iso,
             "used": 0,
         })
-        return token
+        return token, row["email"], row["username"]
+
+
+def request_password_reset(identifier: str) -> str | None:
+    token, _, _ = request_password_reset_details(identifier)
+    return token
 
 
 def consume_password_reset(token: str, password: str) -> tuple[bool, str]:

@@ -29,12 +29,14 @@ from auth_service import (
     list_users,
     log_error,
     request_password_reset,
+    request_password_reset_details,
     revoke_session,
     sync_sqlite_to_firebase,
     update_profile,
     update_role_permissions,
     update_settings,
 )
+from email_service import is_smtp_configured, send_password_reset_email
 from model.rentability_model import (
     estimate_business_metrics,
     load_artifact,
@@ -769,11 +771,21 @@ def render_login() -> None:
             identifier = st.text_input("Usuario o correo")
             submitted = st.form_submit_button("Solicitar restablecimiento")
         if submitted:
-            token = request_password_reset(identifier)
+            token, user_email, username = request_password_reset_details(identifier)
             if token:
                 st.session_state.reset_token = token
-                st.success("Solicitud creada. En un entorno real el enlace se enviaría por correo.")
-                st.code(token, language="text")
+                sent, email_msg = False, ""
+                if user_email and is_smtp_configured():
+                    sent, email_msg = send_password_reset_email(user_email, token, username)
+
+                if sent:
+                    st.success(f"📧 Se ha enviado un correo con el token de recuperación a **{user_email}**. Revisa tu bandeja de entrada.")
+                else:
+                    if user_email and not is_smtp_configured():
+                        st.info("ℹ️ Servicio de correo no configurado. Token generado para pruebas:")
+                    else:
+                        st.warning(f"⚠️ No se pudo enviar el correo ({email_msg}). Puedes usar el token generado:")
+                    st.code(token, language="text")
             else:
                 st.info("Si la cuenta existe, recibirás instrucciones de recuperación.")
         reset_token = st.text_input("Token de recuperación", value=st.session_state.get("reset_token", ""), type="password")
