@@ -60,6 +60,35 @@ def find_credentials_path() -> Path | None:
     return None
 
 
+def get_credentials():
+    """Finds credentials from local files, environment variables, or Streamlit Cloud Secrets."""
+    cred_path = find_credentials_path()
+    if cred_path:
+        return "file", cred_path
+
+    # Check Streamlit Cloud Secrets (st.secrets)
+    try:
+        import streamlit as st
+        if "FIREBASE_KEY_JSON" in st.secrets:
+            import json
+            raw_val = st.secrets["FIREBASE_KEY_JSON"]
+            if isinstance(raw_val, str):
+                return "dict", json.loads(raw_val)
+            elif isinstance(raw_val, dict):
+                return "dict", dict(raw_val)
+
+        if "firebase" in st.secrets:
+            sec_dict = dict(st.secrets["firebase"])
+            # Handle newlines if private_key was escaped
+            if "private_key" in sec_dict and "\\n" in sec_dict["private_key"]:
+                sec_dict["private_key"] = sec_dict["private_key"].replace("\\n", "\n")
+            return "dict", sec_dict
+    except Exception:
+        pass
+
+    return None, None
+
+
 def get_firebase_status() -> dict[str, Any]:
     global _initialization_status
     if not _initialization_status["connected"]:
@@ -73,13 +102,13 @@ def init_firebase(force_reinit: bool = False):
     if _firebase_app is not None and not force_reinit:
         return _firebase_app
 
-    cred_path = find_credentials_path()
-    if not cred_path:
+    cred_type, cred_target = get_credentials()
+    if not cred_type:
         _initialization_status = {
             "connected": False,
             "credentials_file": None,
             "database_type": None,
-            "error_message": "No se encontró ningún archivo de credenciales (serviceAccountKey.json).",
+            "error_message": "No se encontró ningún archivo de credenciales (serviceAccountKey.json) ni secretos en st.secrets.",
             "project_id": DEFAULT_PROJECT_ID,
         }
         return None
@@ -89,7 +118,13 @@ def init_firebase(force_reinit: bool = False):
         from firebase_admin import auth, credentials, db, firestore
 
         if not firebase_admin._apps:
-            cred = credentials.Certificate(str(cred_path))
+            if cred_type == "file":
+                cred = credentials.Certificate(str(cred_target))
+                cred_label = str(cred_target.name)
+            else:
+                cred = credentials.Certificate(cred_target)
+                cred_label = "Streamlit Cloud Secrets"
+
             _firebase_app = firebase_admin.initialize_app(
                 cred,
                 {
@@ -99,6 +134,7 @@ def init_firebase(force_reinit: bool = False):
             )
         else:
             _firebase_app = firebase_admin.get_app()
+            cred_label = "Firebase App Activa"
 
         _firebase_auth = auth
         _rtdb = db
@@ -112,7 +148,7 @@ def init_firebase(force_reinit: bool = False):
 
         _initialization_status = {
             "connected": True,
-            "credentials_file": str(cred_path.name),
+            "credentials_file": cred_label,
             "database_type": active_type,
             "database_url": DEFAULT_DATABASE_URL,
             "error_message": None,
